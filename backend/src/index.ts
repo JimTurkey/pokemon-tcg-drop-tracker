@@ -11,9 +11,10 @@ import adminRoutes from './routes/admin';
 import notificationRoutes from './routes/notifications';
 import { startScheduler } from './services/scheduler';
 import pool from './config/database';
+import { runVersionedMigrations } from './config/migrations';
 
-// Run database migrations
-async function runMigrations() {
+// Preserve the original PriceGhost schema bootstrap for existing installations.
+async function runLegacySchemaBootstrap() {
   const client = await pool.connect();
   try {
     // First, ensure base tables exist (for fresh installs without init.sql)
@@ -289,8 +290,9 @@ app.use(
 // Start server with proper initialization sequence
 async function startServer() {
   try {
-    // Run database migrations BEFORE accepting connections
-    await runMigrations();
+    // Preserve legacy PriceGhost compatibility, then apply durable migrations.
+    await runLegacySchemaBootstrap();
+    await runVersionedMigrations();
 
     app.listen(PORT, () => {
       console.log(`PriceGhost API server running on port ${PORT}`);
