@@ -8,6 +8,7 @@ import {
   DEFAULT_MIGRATIONS_DIRECTORY,
   runVersionedMigrations,
 } from '../../src/config/migrations';
+import { assertDestructiveResetAllowed } from './postgres-test-safety';
 
 const connectionString = process.env.MIGRATION_TEST_DATABASE_URL;
 const describeWithPostgres = connectionString ? describe : describe.skip;
@@ -15,9 +16,13 @@ const pool = new Pool({ connectionString });
 const temporaryDirectories: string[] = [];
 const silentLogger = { info: () => undefined };
 
-async function resetPublicSchema(): Promise<void> {
-  await pool.query('DROP SCHEMA public CASCADE');
-  await pool.query('CREATE SCHEMA public');
+async function resetPublicSchema(
+  databasePool: Pool = pool,
+  allowDestructiveReset?: boolean
+): Promise<void> {
+  await assertDestructiveResetAllowed(databasePool, allowDestructiveReset);
+  await databasePool.query('DROP SCHEMA public CASCADE');
+  await databasePool.query('CREATE SCHEMA public');
 }
 
 async function expectConstraintViolation(
@@ -131,6 +136,49 @@ describeWithPostgres('versioned migrations with PostgreSQL 16', () => {
         logger: silentLogger,
       })
     ).rejects.toThrow('Checksum mismatch for applied migration 1');
+  });
+
+  it('rejects and does not ledger a historical migration introduced after a later version', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'tracker-integration-'));
+    temporaryDirectories.push(directory);
+    await writeFile(
+      path.join(directory, '0001_first.sql'),
+      'CREATE TABLE first_migration_probe (id BIGINT PRIMARY KEY);\n'
+    );
+    await writeFile(
+      path.join(directory, '0003_third.sql'),
+      'CREATE TABLE third_migration_probe (id BIGINT PRIMARY KEY);\n'
+    );
+
+    await runVersionedMigrations({
+      databasePool: pool,
+      migrationsDirectory: directory,
+      logger: silentLogger,
+    });
+    await writeFile(
+      path.join(directory, '0002_late_backfill.sql'),
+      'CREATE TABLE forbidden_backfill_probe (id BIGINT PRIMARY KEY);\n'
+    );
+
+    await expect(
+      runVersionedMigrations({
+        databasePool: pool,
+        migrationsDirectory: directory,
+        logger: silentLogger,
+      })
+    ).rejects.toThrow(
+      'Out-of-order/backfill migration 0002_late_backfill.sql cannot be applied'
+    );
+
+    const ledger = await pool.query<{ version: string }>(
+      'SELECT version::TEXT FROM schema_migrations ORDER BY version'
+    );
+    expect(ledger.rows).toEqual([{ version: '1' }, { version: '3' }]);
+
+    const backfillTable = await pool.query<{ table_name: string | null }>(
+      `SELECT TO_REGCLASS('public.forbidden_backfill_probe')::TEXT AS table_name`
+    );
+    expect(backfillTable.rows[0].table_name).toBeNull();
   });
 
   it('rolls back a failed migration and does not ledger it', async () => {
@@ -258,5 +306,29 @@ describeWithPostgres('versioned migrations with PostgreSQL 16', () => {
       [productId],
       'retailer_listings_pokemon_product_id_fkey'
     );
+  });
+
+  it('refuses destructive reset on a non-test database without explicit opt-in', async () => {
+    const nonTestDatabaseUrl = new URL(connectionString as string);
+    nonTestDatabaseUrl.pathname = '/postgres';
+    const nonTestPool = new Pool({ connectionString: nonTestDatabaseUrl.href });
+
+    try {
+      await expect(resetPublicSchema(nonTestPool, false)).rejects.toThrow(
+        'Refusing destructive migration-test reset on database "postgres"'
+      );
+      await expect(
+        assertDestructiveResetAllowed(nonTestPool, true)
+      ).resolves.toBe('postgres');
+
+      const publicSchema = await nonTestPool.query<{ exists: boolean }>(`
+        SELECT EXISTS (
+          SELECT 1 FROM information_schema.schemata WHERE schema_name = 'public'
+        ) AS exists
+      `);
+      expect(publicSchema.rows[0].exists).toBe(true);
+    } finally {
+      await nonTestPool.end();
+    }
   });
 });

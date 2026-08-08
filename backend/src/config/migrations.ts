@@ -206,15 +206,29 @@ export async function runVersionedMigrations(
       migrations,
       ledgerResult.rows
     );
-    const applied: SqlMigration[] = [];
-    const skipped: SqlMigration[] = [];
+    const unappliedMigrations = migrations.filter(
+      (migration) => !appliedVersions.has(migration.version)
+    );
+    const highestAppliedVersion =
+      appliedVersions.size > 0 ? Math.max(...appliedVersions) : undefined;
 
-    for (const migration of migrations) {
-      if (appliedVersions.has(migration.version)) {
-        skipped.push(migration);
-        continue;
+    if (highestAppliedVersion !== undefined) {
+      const historicalMigration = unappliedMigrations.find(
+        (migration) => migration.version < highestAppliedVersion
+      );
+      if (historicalMigration) {
+        throw new Error(
+          `Out-of-order/backfill migration ${historicalMigration.filename} cannot be applied because migration version ${highestAppliedVersion} is already applied. Add a new migration with a version greater than ${highestAppliedVersion}.`
+        );
       }
+    }
 
+    const applied: SqlMigration[] = [];
+    const skipped = migrations.filter((migration) =>
+      appliedVersions.has(migration.version)
+    );
+
+    for (const migration of unappliedMigrations) {
       const startedAt = Date.now();
       await client.query('BEGIN');
       try {

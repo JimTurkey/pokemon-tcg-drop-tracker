@@ -12,10 +12,21 @@ duration. An applied file must never be edited: a checksum or filename mismatch
 stops startup. Each unapplied file and its ledger row are committed in one
 transaction, so a failure rolls back both.
 
+Migrations are forward-only. Gaps are allowed, but after a version has been
+applied, a newly introduced migration with a lower version is rejected as an
+out-of-order backfill. Corrective work must use a new version greater than the
+highest applied version.
+
 The runner holds a session-level PostgreSQL advisory lock while it discovers,
 checks, and applies migrations. This prevents multiple backend instances from
 upgrading the same database concurrently, and the lock is released in a
 `finally` block.
+
+PostgreSQL integration tests reset the `public` schema. Before every reset they
+query `current_database()` and require the database name
+`pokemon_tracker_test`. A differently named disposable database is permitted
+only when `MIGRATION_TEST_ALLOW_DESTRUCTIVE_RESET=true` is explicitly set;
+setting only `MIGRATION_TEST_DATABASE_URL` never bypasses this safeguard.
 
 Run migrations manually from the backend directory:
 
