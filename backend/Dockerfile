@@ -57,6 +57,9 @@ RUN npm install --omit=dev
 # Copy built files from builder
 COPY --from=builder /app/dist ./dist
 
+# Copy versioned SQL migrations required during application startup
+COPY --from=builder /app/migrations ./migrations
+
 # Create non-root user
 RUN groupadd -r nodejs && useradd -r -g nodejs nodejs
 
