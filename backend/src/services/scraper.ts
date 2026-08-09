@@ -1,90 +1,39 @@
-import axios, { AxiosError } from 'axios';
 import { load, type CheerioAPI } from 'cheerio';
-import puppeteer from 'puppeteer-extra';
-import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import {
   parsePrice,
-  ParsedPrice,
   findMostLikelyPrice,
 } from '../utils/priceParser';
+import type { ParsedPrice } from '../utils/priceParser';
+import type {
+  AIStatus,
+  ExtractionMethod,
+  LegacyStockStatus,
+  PriceCandidate,
+  ScrapedProduct,
+  ScrapedProductWithCandidates,
+} from '../scraping/contracts';
+import {
+  productionPageAcquirer,
+  type PageAcquirer,
+} from '../scraping/acquisition/page-acquirer';
+import {
+  findPriceConsensus,
+  pricesMatch,
+  selectAnchorCandidate,
+  selectPreferredCandidate,
+} from '../scraping/legacy/price-voting';
 
-// Add stealth plugin to avoid bot detection (Cloudflare, etc.)
-puppeteer.use(StealthPlugin());
+export type {
+  AIStatus,
+  ExtractionMethod,
+  LegacyStockStatus,
+  PriceCandidate,
+  ScrapedProduct,
+  ScrapedProductWithCandidates,
+} from '../scraping/contracts';
 
-export type StockStatus = 'in_stock' | 'out_of_stock' | 'unknown';
-
-// Extraction method types for multi-strategy voting
-export type ExtractionMethod = 'json-ld' | 'site-specific' | 'generic-css' | 'ai';
-
-// Price candidate from a single extraction method
-export interface PriceCandidate {
-  price: number;
-  currency: string;
-  method: ExtractionMethod;
-  context?: string; // Text around the price for user context
-  confidence: number; // 0-1 confidence score
-}
-
-// Extended scrape result with candidates for voting
-export interface ScrapedProductWithCandidates {
-  name: string | null;
-  price: ParsedPrice | null;
-  imageUrl: string | null;
-  url: string;
-  stockStatus: StockStatus;
-  aiStatus: 'verified' | 'corrected' | null;
-  priceCandidates: PriceCandidate[];
-  needsReview: boolean;
-  selectedMethod?: ExtractionMethod; // Which method was used for final price
-}
-
-// Check if two prices are "close enough" to be considered the same (within 5%)
-function pricesMatch(price1: number, price2: number): boolean {
-  if (price1 === price2) return true;
-  const diff = Math.abs(price1 - price2);
-  const avg = (price1 + price2) / 2;
-  return (diff / avg) < 0.05; // Within 5%
-}
-
-// Find consensus among price candidates
-function findPriceConsensus(candidates: PriceCandidate[]): { price: PriceCandidate | null; hasConsensus: boolean; groups: PriceCandidate[][] } {
-  if (candidates.length === 0) return { price: null, hasConsensus: false, groups: [] };
-  if (candidates.length === 1) return { price: candidates[0], hasConsensus: true, groups: [[candidates[0]]] };
-
-  // Group prices that match
-  const groups: PriceCandidate[][] = [];
-  for (const candidate of candidates) {
-    let foundGroup = false;
-    for (const group of groups) {
-      if (pricesMatch(candidate.price, group[0].price)) {
-        group.push(candidate);
-        foundGroup = true;
-        break;
-      }
-    }
-    if (!foundGroup) {
-      groups.push([candidate]);
-    }
-  }
-
-  // Sort groups by size (most votes first), then by confidence
-  groups.sort((a, b) => {
-    if (b.length !== a.length) return b.length - a.length;
-    const avgConfA = a.reduce((sum, c) => sum + c.confidence, 0) / a.length;
-    const avgConfB = b.reduce((sum, c) => sum + c.confidence, 0) / b.length;
-    return avgConfB - avgConfA;
-  });
-
-  const largestGroup = groups[0];
-  // Consensus if majority agrees (>= 50% of methods) OR if top group has significantly more votes
-  const hasConsensus = largestGroup.length >= Math.ceil(candidates.length / 2) ||
-                       (groups.length > 1 && largestGroup.length > groups[1].length);
-
-  // Pick the highest confidence candidate from the winning group
-  const winner = largestGroup.sort((a, b) => b.confidence - a.confidence)[0];
-
-  return { price: winner, hasConsensus, groups };
-}
+/** @deprecated Use LegacyStockStatus from scraping/contracts for new code. */
+export type StockStatus = LegacyStockStatus;
 
 // Extract price candidates from JSON-LD structured data
 function extractJsonLdCandidates($: CheerioAPI): PriceCandidate[] {
@@ -244,86 +193,6 @@ function extractGenericCssCandidates($: CheerioAPI): PriceCandidate[] {
   }
 
   return candidates;
-}
-
-// Browser-based scraping for sites that block HTTP requests (e.g., Cloudflare)
-async function scrapeWithBrowser(url: string): Promise<string> {
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-blink-features=AutomationControlled',
-      '--disable-infobars',
-      '--disable-crash-reporter',
-      '--window-size=1920,1080',
-      '--start-maximized',
-    ],
-    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-    ignoreDefaultArgs: ['--enable-automation'],
-  });
-
-  try {
-    const page = await browser.newPage();
-
-    // Set viewport
-    await page.setViewport({ width: 1920, height: 1080 });
-
-    // Navigate to the page and wait for content to load
-    await page.goto(url, {
-      waitUntil: 'networkidle2',
-      timeout: 45000,
-    });
-
-    // Add some human-like behavior
-    await page.mouse.move(100, 200);
-    await new Promise(resolve => setTimeout(resolve, 500));
-    await page.mouse.move(300, 400);
-
-    // Wait for Cloudflare challenge to complete if present
-    // Check if we're on a challenge page and wait for it to resolve
-    const maxWaitTime = 20000;
-    const startTime = Date.now();
-
-    while (Date.now() - startTime < maxWaitTime) {
-      const title = await page.title();
-      // Cloudflare challenge pages have titles like "Just a moment..."
-      if (!title.toLowerCase().includes('just a moment') &&
-          !title.toLowerCase().includes('checking your browser')) {
-        break;
-      }
-      console.log(`[Browser] Waiting for Cloudflare challenge to complete... (${title})`);
-      // Move mouse randomly while waiting
-      await page.mouse.move(
-        100 + Math.random() * 500,
-        100 + Math.random() * 400
-      );
-      await new Promise(resolve => setTimeout(resolve, 2000));
-    }
-
-    // Scroll down a bit like a human would
-    // eslint-disable-next-line @typescript-eslint/no-implied-eval
-    await page.evaluate('window.scrollBy(0, 300)');
-    await new Promise(resolve => setTimeout(resolve, 1000));
-
-    // Get the full HTML content
-    const html = await page.content();
-    return html;
-  } finally {
-    await browser.close();
-  }
-}
-
-export type AIStatus = 'verified' | 'corrected' | null;
-
-export interface ScrapedProduct {
-  name: string | null;
-  price: ParsedPrice | null;
-  imageUrl: string | null;
-  url: string;
-  stockStatus: StockStatus;
-  aiStatus: AIStatus;
 }
 
 // Site-specific scraper configurations
@@ -1123,7 +992,11 @@ const genericImageSelectors = [
   'img[class*="product"]',
 ];
 
-export async function scrapeProduct(url: string, userId?: number): Promise<ScrapedProduct> {
+async function scrapeProductUsing(
+  pageAcquirer: PageAcquirer,
+  url: string,
+  userId?: number
+): Promise<ScrapedProduct> {
   const result: ScrapedProduct = {
     name: null,
     price: null,
@@ -1139,34 +1012,12 @@ export async function scrapeProduct(url: string, userId?: number): Promise<Scrap
     let usedBrowser = false;
 
     try {
-      const response = await axios.get<string>(url, {
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-          Accept:
-            'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.9',
-          'Accept-Encoding': 'gzip, deflate, br',
-          'Cache-Control': 'no-cache',
-          Pragma: 'no-cache',
-          'Sec-Ch-Ua': '"Not A(Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"',
-          'Sec-Ch-Ua-Mobile': '?0',
-          'Sec-Ch-Ua-Platform': '"Windows"',
-          'Sec-Fetch-Dest': 'document',
-          'Sec-Fetch-Mode': 'navigate',
-          'Sec-Fetch-Site': 'none',
-          'Sec-Fetch-User': '?1',
-          'Upgrade-Insecure-Requests': '1',
-        },
-        timeout: 20000,
-        maxRedirects: 5,
-      });
-      html = response.data;
+      html = await pageAcquirer.acquireStatic(url);
     } catch (axiosError) {
       // If we get a 403 (Forbidden), try using a headless browser
-      if (axiosError instanceof AxiosError && axiosError.response?.status === 403) {
+      if (pageAcquirer.isForbiddenError(axiosError)) {
         console.log(`HTTP request blocked (403) for ${url}, falling back to browser scraping...`);
-        html = await scrapeWithBrowser(url);
+        html = await pageAcquirer.acquireBrowser(url);
         usedBrowser = true;
       } else {
         throw axiosError;
@@ -1233,7 +1084,7 @@ export async function scrapeProduct(url: string, userId?: number): Promise<Scrap
     if (!result.price && !usedBrowser) {
       console.log(`[Scraper] No price found in static HTML for ${url}, trying headless browser...`);
       try {
-        html = await scrapeWithBrowser(url);
+        html = await pageAcquirer.acquireBrowser(url);
         usedBrowser = true;
         const $browser = load(html);
 
@@ -1359,7 +1210,8 @@ export async function scrapeProduct(url: string, userId?: number): Promise<Scrap
  * @param skipAiVerification - If true, skip AI verification entirely for this product.
  * @param skipAiExtraction - If true, skip AI extraction fallback for this product.
  */
-export async function scrapeProductWithVoting(
+async function scrapeProductWithVotingUsing(
+  pageAcquirer: PageAcquirer,
   url: string,
   userId?: number,
   preferredMethod?: ExtractionMethod,
@@ -1380,14 +1232,7 @@ export async function scrapeProductWithVoting(
 
   let html: string = '';
 
-  // Sites known to require JavaScript rendering
-  const jsHeavySites = [
-    /bestbuy\.com/i,
-    /target\.com/i,
-    /walmart\.com/i,
-    /costco\.com/i,
-  ];
-  const requiresBrowser = jsHeavySites.some(pattern => pattern.test(url));
+  const requiresBrowser = pageAcquirer.requiresDirectBrowser(url);
 
   try {
     let usedBrowser = false;
@@ -1395,38 +1240,16 @@ export async function scrapeProductWithVoting(
     // For JS-heavy sites, go straight to browser
     if (requiresBrowser) {
       console.log(`[Voting] ${new URL(url).hostname} requires browser rendering, using Puppeteer...`);
-      html = await scrapeWithBrowser(url);
+      html = await pageAcquirer.acquireBrowser(url);
       usedBrowser = true;
     } else {
       // Fetch HTML
       try {
-        const response = await axios.get<string>(url, {
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-          Accept:
-            'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.9',
-          'Accept-Encoding': 'gzip, deflate, br',
-          'Cache-Control': 'no-cache',
-          Pragma: 'no-cache',
-          'Sec-Ch-Ua': '"Not A(Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"',
-          'Sec-Ch-Ua-Mobile': '?0',
-          'Sec-Ch-Ua-Platform': '"Windows"',
-          'Sec-Fetch-Dest': 'document',
-          'Sec-Fetch-Mode': 'navigate',
-          'Sec-Fetch-Site': 'none',
-          'Sec-Fetch-User': '?1',
-          'Upgrade-Insecure-Requests': '1',
-        },
-        timeout: 20000,
-        maxRedirects: 5,
-      });
-      html = response.data;
+        html = await pageAcquirer.acquireStatic(url);
       } catch (axiosError) {
-        if (axiosError instanceof AxiosError && axiosError.response?.status === 403) {
+        if (pageAcquirer.isForbiddenError(axiosError)) {
           console.log(`[Voting] HTTP blocked (403) for ${url}, using browser...`);
-          html = await scrapeWithBrowser(url);
+          html = await pageAcquirer.acquireBrowser(url);
           usedBrowser = true;
         } else {
           throw axiosError;
@@ -1461,7 +1284,7 @@ export async function scrapeProductWithVoting(
     if (allCandidates.length === 0 && !usedBrowser) {
       console.log(`[Voting] No candidates in static HTML, trying browser...`);
       try {
-        html = await scrapeWithBrowser(url);
+        html = await pageAcquirer.acquireBrowser(url);
         usedBrowser = true;
         $ = load(html);
 
@@ -1503,18 +1326,13 @@ export async function scrapeProductWithVoting(
     if (anchorPrice && allCandidates.length > 0) {
       console.log(`[Voting] Have anchor price ${anchorPrice}, searching ${allCandidates.length} candidates: ${allCandidates.map(c => c.price).join(', ')}`);
 
-      // Find the candidate closest to the anchor price
-      const closestCandidate = allCandidates.reduce((closest, candidate) => {
-        const closestDiff = Math.abs(closest.price - anchorPrice);
-        const candidateDiff = Math.abs(candidate.price - anchorPrice);
-        return candidateDiff < closestDiff ? candidate : closest;
-      });
-
-      const priceDiff = Math.abs(closestCandidate.price - anchorPrice) / anchorPrice;
+      const anchorSelection = selectAnchorCandidate(allCandidates, anchorPrice)!;
+      const closestCandidate = anchorSelection.candidate;
+      const priceDiff = anchorSelection.relativeDifference;
 
       // Use anchor matching if within 15% (allows for small sales)
       // or if it's an exact match
-      if (closestCandidate.price === anchorPrice || priceDiff < 0.15) {
+      if (anchorSelection.withinTolerance) {
         console.log(`[Voting] Found match for anchor price ${anchorPrice}: ${closestCandidate.price} via ${closestCandidate.method} (${(priceDiff * 100).toFixed(1)}% diff)`);
         result.price = { price: closestCandidate.price, currency: closestCandidate.currency };
         result.selectedMethod = closestCandidate.method;
@@ -1580,10 +1398,8 @@ export async function scrapeProductWithVoting(
 
     // PRIORITY 2: If user has a preferred method and no anchor match, try that method
     if (preferredMethod && allCandidates.length > 0) {
-      const preferredCandidates = allCandidates.filter(c => c.method === preferredMethod);
-      if (preferredCandidates.length > 0) {
-        // Use highest confidence candidate from preferred method
-        const selectedCandidate = preferredCandidates.sort((a, b) => b.confidence - a.confidence)[0];
+      const selectedCandidate = selectPreferredCandidate(allCandidates, preferredMethod);
+      if (selectedCandidate) {
         console.log(`[Voting] Using preferred method ${preferredMethod}: ${selectedCandidate.price}`);
         result.price = { price: selectedCandidate.price, currency: selectedCandidate.currency };
         result.selectedMethod = preferredMethod;
@@ -2129,7 +1945,69 @@ function extractGenericStockStatus($: CheerioAPI): StockStatus {
   return 'unknown';
 }
 
+export interface LegacyScraper {
+  scrapeProduct(url: string, userId?: number): Promise<ScrapedProduct>;
+  scrapeProductWithVoting(
+    url: string,
+    userId?: number,
+    preferredMethod?: ExtractionMethod,
+    anchorPrice?: number,
+    skipAiVerification?: boolean,
+    skipAiExtraction?: boolean
+  ): Promise<ScrapedProductWithCandidates>;
+  scrapePrice(url: string): Promise<ParsedPrice | null>;
+}
+
+export function createScraper(pageAcquirer: PageAcquirer): LegacyScraper {
+  return {
+    scrapeProduct: (url, userId) => scrapeProductUsing(pageAcquirer, url, userId),
+    scrapeProductWithVoting: (
+      url,
+      userId,
+      preferredMethod,
+      anchorPrice,
+      skipAiVerification,
+      skipAiExtraction
+    ) => scrapeProductWithVotingUsing(
+      pageAcquirer,
+      url,
+      userId,
+      preferredMethod,
+      anchorPrice,
+      skipAiVerification,
+      skipAiExtraction
+    ),
+    async scrapePrice(url) {
+      const product = await scrapeProductUsing(pageAcquirer, url);
+      return product.price;
+    },
+  };
+}
+
+const productionScraper = createScraper(productionPageAcquirer);
+
+export async function scrapeProduct(url: string, userId?: number): Promise<ScrapedProduct> {
+  return productionScraper.scrapeProduct(url, userId);
+}
+
+export async function scrapeProductWithVoting(
+  url: string,
+  userId?: number,
+  preferredMethod?: ExtractionMethod,
+  anchorPrice?: number,
+  skipAiVerification?: boolean,
+  skipAiExtraction?: boolean
+): Promise<ScrapedProductWithCandidates> {
+  return productionScraper.scrapeProductWithVoting(
+    url,
+    userId,
+    preferredMethod,
+    anchorPrice,
+    skipAiVerification,
+    skipAiExtraction
+  );
+}
+
 export async function scrapePrice(url: string): Promise<ParsedPrice | null> {
-  const product = await scrapeProduct(url);
-  return product.price;
+  return productionScraper.scrapePrice(url);
 }

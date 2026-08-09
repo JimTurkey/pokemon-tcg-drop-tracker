@@ -3,9 +3,9 @@ import OpenAI from 'openai';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import axios from 'axios';
 import { load } from 'cheerio';
-import { AISettings } from '../models';
-import { ParsedPrice } from '../utils/priceParser';
-import { StockStatus, PriceCandidate } from './scraper';
+import type { AISettings } from '../models';
+import type { ParsedPrice } from '../utils/priceParser';
+import type { LegacyStockStatus as StockStatus, PriceCandidate } from '../scraping/contracts';
 
 // Strip thinking mode tags from model responses (Qwen3, DeepSeek, etc.)
 // These models output <think>...</think> blocks before their actual response
