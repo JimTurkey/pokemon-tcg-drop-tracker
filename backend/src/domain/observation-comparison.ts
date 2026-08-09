@@ -12,8 +12,6 @@ export const MEANINGFUL_OBSERVATION_FIELDS = [
   'retailer.hostname',
   'product.retailerSku',
   'product.rawName',
-  'product.canonicalProductKey',
-  'product.productType',
   'listing.canonicalUrl',
   'listing.visibility',
   'listing.releaseState',
@@ -63,10 +61,6 @@ function meaningfulValue(
       return observation.product.retailerSku;
     case 'product.rawName':
       return observation.product.rawName;
-    case 'product.canonicalProductKey':
-      return observation.product.canonicalProductKey;
-    case 'product.productType':
-      return observation.product.productType;
     case 'listing.canonicalUrl':
       return observation.listing.canonicalUrl;
     case 'listing.visibility':

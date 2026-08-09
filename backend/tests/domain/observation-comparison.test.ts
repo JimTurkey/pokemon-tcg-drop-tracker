@@ -90,4 +90,50 @@ describe('compareRetailerObservations', () => {
       changedFields: ['actions.addToCart'],
     });
   });
+
+  it('ignores a canonical product key enrichment change', () => {
+    const previous = createValidRetailerObservation();
+    previous.product.canonicalProductKey = null;
+    const current = structuredClone(previous);
+    current.product.canonicalProductKey = 'example-set:etb';
+
+    expect(compareRetailerObservations(previous, current)).toMatchObject({
+      changeState: 'unchanged',
+      changedFields: [],
+    });
+  });
+
+  it('ignores a product type enrichment change', () => {
+    const previous = createValidRetailerObservation();
+    previous.product.productType = null;
+    const current = structuredClone(previous);
+    current.product.productType = 'etb';
+
+    expect(compareRetailerObservations(previous, current)).toMatchObject({
+      changeState: 'unchanged',
+      changedFields: [],
+    });
+  });
+
+  it('still classifies a retailer SKU change as changed', () => {
+    const previous = createValidRetailerObservation();
+    const current = structuredClone(previous);
+    current.product.retailerSku = '87654321';
+
+    expect(compareRetailerObservations(previous, current)).toMatchObject({
+      changeState: 'changed',
+      changedFields: ['product.retailerSku'],
+    });
+  });
+
+  it('still classifies a raw product-name change as changed', () => {
+    const previous = createValidRetailerObservation();
+    const current = structuredClone(previous);
+    current.product.rawName = 'Pokémon TCG Renamed Elite Trainer Box';
+
+    expect(compareRetailerObservations(previous, current)).toMatchObject({
+      changeState: 'changed',
+      changedFields: ['product.rawName'],
+    });
+  });
 });

@@ -63,6 +63,18 @@ describe('validateRetailerObservation', () => {
     expect(validateRetailerObservation(observation).valid).toBe(true);
   });
 
+  it.each(['retailerSku', 'rawName', 'canonicalProductKey'] as const)(
+    'rejects an empty product.%s',
+    (field) => {
+      const observation = createValidRetailerObservation();
+      observation.product[field] = '';
+
+      expect(errorsFor(observation)).toContain(
+        `product.${field} must be null or a nonempty string.`
+      );
+    }
+  );
+
   it.each([-1, 101, Number.NaN, Number.POSITIVE_INFINITY])(
     'rejects invalid observation confidence %s',
     (confidenceScore) => {
@@ -87,6 +99,52 @@ describe('validateRetailerObservation', () => {
     );
   });
 
+  it('rejects a missing required evidence kind', () => {
+    const observation = createValidRetailerObservation();
+    delete (observation.evidence[0] as { kind?: unknown }).kind;
+
+    expect(errorsFor(observation)).toContain('evidence[0].kind is invalid.');
+  });
+
+  it('rejects an invalid evidence kind', () => {
+    const observation = createValidRetailerObservation();
+    (observation.evidence[0] as { kind: unknown }).kind = 'retailer_guess';
+
+    expect(errorsFor(observation)).toContain('evidence[0].kind is invalid.');
+  });
+
+  it('rejects a missing evidence source', () => {
+    const observation = createValidRetailerObservation();
+    delete (observation.evidence[0] as { source?: unknown }).source;
+
+    expect(errorsFor(observation)).toContain(
+      'evidence[0].source must be nonempty.'
+    );
+  });
+
+  it('rejects a non-JSON evidence value', () => {
+    const observation = createValidRetailerObservation();
+    (observation.evidence[0] as { value: unknown }).value = {
+      nested: [true, undefined],
+    };
+
+    expect(errorsFor(observation)).toContain(
+      'evidence[0].value must be JSON-compatible.'
+    );
+  });
+
+  it('rejects an invalid action target URL', () => {
+    const observation = createValidRetailerObservation();
+    observation.actions.addToCart = {
+      ...observation.actions.addToCart,
+      targetUrl: 'javascript:alert(1)',
+    };
+
+    expect(errorsFor(observation)).toContain(
+      'actions.addToCart.targetUrl must be null or an absolute HTTP/HTTPS URL.'
+    );
+  });
+
   it.each(['relative/path', 'ftp://target.example/product', 'not a url'])(
     'rejects invalid canonical URL %s',
     (canonicalUrl) => {
@@ -100,8 +158,8 @@ describe('validateRetailerObservation', () => {
   );
 
   it.each([
-    ['observedAt', 'observedAt must be a valid timestamp.'],
-    ['acquiredAt', 'acquisition.acquiredAt must be a valid timestamp.'],
+    ['observedAt', 'observedAt must be a valid ISO date-time.'],
+    ['acquiredAt', 'acquisition.acquiredAt must be a valid ISO date-time.'],
   ] as const)('rejects an invalid %s timestamp', (field, message) => {
     const observation = createValidRetailerObservation();
     if (field === 'observedAt') {
@@ -112,6 +170,55 @@ describe('validateRetailerObservation', () => {
 
     expect(errorsFor(observation)).toContain(message);
   });
+
+  it('rejects a non-ISO but parseable observedAt', () => {
+    const observation = createValidRetailerObservation();
+    observation.observedAt = 'August 9, 2026 12:00:01 UTC';
+
+    expect(Number.isFinite(Date.parse(observation.observedAt))).toBe(true);
+    expect(errorsFor(observation)).toContain(
+      'observedAt must be a valid ISO date-time.'
+    );
+  });
+
+  it('rejects a non-ISO but parseable acquisition timestamp', () => {
+    const observation = createValidRetailerObservation();
+    observation.acquisition.acquiredAt = 'August 9, 2026 12:00:00 UTC';
+
+    expect(Number.isFinite(Date.parse(observation.acquisition.acquiredAt)))
+      .toBe(true);
+    expect(errorsFor(observation)).toContain(
+      'acquisition.acquiredAt must be a valid ISO date-time.'
+    );
+  });
+
+  it('accepts an ISO date-only listing releaseDate', () => {
+    const observation = createValidRetailerObservation();
+    observation.listing.releaseDate = '2026-08-09';
+
+    expect(validateRetailerObservation(observation).valid).toBe(true);
+  });
+
+  it('rejects an invalid listing releaseDate', () => {
+    const observation = createValidRetailerObservation();
+    observation.listing.releaseDate = '2026-02-30';
+
+    expect(errorsFor(observation)).toContain(
+      'listing.releaseDate must be null, an ISO date, or an ISO date-time.'
+    );
+  });
+
+  it.each([undefined, 99, 600, 200.5, '200'])(
+    'rejects malformed acquisition HTTP status %s',
+    (httpStatus) => {
+      const observation = createValidRetailerObservation();
+      (observation.acquisition as { httpStatus: unknown }).httpStatus = httpStatus;
+
+      expect(errorsFor(observation)).toContain(
+        'acquisition.httpStatus must be null or an integer from 100 to 599.'
+      );
+    }
+  );
 
   it.each(['usd', 'US', 'USDD', '12A'])(
     'rejects invalid currency %s',
@@ -176,6 +283,60 @@ describe('validateRetailerObservation', () => {
       )).toBe(true);
     }
   );
+
+  it.each(['action', 'seller', 'pickup'] as const)(
+    'rejects duplicate %s evidence references',
+    (owner) => {
+      const observation = createValidRetailerObservation();
+      let expectedPath: string;
+      if (owner === 'action') {
+        observation.actions.addToCart = {
+          ...observation.actions.addToCart,
+          evidenceIds: ['cart-evidence', 'cart-evidence'],
+        };
+        expectedPath = 'actions.addToCart.evidenceIds';
+      } else if (owner === 'seller') {
+        observation.sellerEvidence = [
+          {
+            ...observation.sellerEvidence[0],
+            evidenceIds: ['seller-evidence', 'seller-evidence'],
+          },
+        ];
+        expectedPath = 'sellerEvidence[0].evidenceIds';
+      } else {
+        observation.fulfillment.pickupStores = [
+          {
+            ...observation.fulfillment.pickupStores[0],
+            evidenceIds: ['pickup-evidence', 'pickup-evidence'],
+          },
+        ];
+        expectedPath = 'fulfillment.pickupStores[0].evidenceIds';
+      }
+
+      expect(errorsFor(observation)).toContain(
+        `${expectedPath} must not contain duplicate evidence IDs.`
+      );
+    }
+  );
+
+  it('rejects a malformed seller evidence field', () => {
+    const observation = createValidRetailerObservation();
+    (observation.sellerEvidence[0] as { sellerName: unknown }).sellerName = 42;
+
+    expect(errorsFor(observation)).toContain(
+      'sellerEvidence[0].sellerName must be null or a string.'
+    );
+  });
+
+  it('rejects a malformed pickup-store field', () => {
+    const observation = createValidRetailerObservation();
+    (observation.fulfillment.pickupStores[0] as { postalCode: unknown })
+      .postalCode = 29631;
+
+    expect(errorsFor(observation)).toContain(
+      'fulfillment.pickupStores[0].postalCode must be null or a string.'
+    );
+  });
 
   it('rejects an unapproved retailer at runtime', () => {
     const observation = createValidRetailerObservation();

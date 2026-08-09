@@ -207,8 +207,102 @@ function isNonemptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
-function isValidTimestamp(value: unknown): value is string {
-  return isNonemptyString(value) && Number.isFinite(Date.parse(value));
+function isValidCalendarDateParts(
+  year: number,
+  month: number,
+  day: number
+): boolean {
+  if (month < 1 || month > 12 || day < 1) return false;
+
+  const isLeapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [
+    31,
+    isLeapYear ? 29 : 28,
+    31,
+    30,
+    31,
+    30,
+    31,
+    31,
+    30,
+    31,
+    30,
+    31,
+  ];
+
+  return day <= daysInMonth[month - 1];
+}
+
+function isValidIsoDate(value: unknown): value is string {
+  if (!isNonemptyString(value)) return false;
+
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+
+  return isValidCalendarDateParts(
+    Number(match[1]),
+    Number(match[2]),
+    Number(match[3])
+  );
+}
+
+function isValidIsoDateTime(value: unknown): value is string {
+  if (!isNonemptyString(value)) return false;
+
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:Z|[+-](\d{2}):(\d{2}))$/.exec(
+    value
+  );
+  if (!match) return false;
+
+  const validCalendarDate = isValidCalendarDateParts(
+    Number(match[1]),
+    Number(match[2]),
+    Number(match[3])
+  );
+  const validTime =
+    Number(match[4]) <= 23 &&
+    Number(match[5]) <= 59 &&
+    Number(match[6]) <= 59;
+  const validOffset =
+    match[7] === undefined ||
+    (Number(match[7]) <= 23 && Number(match[8]) <= 59);
+
+  return (
+    validCalendarDate &&
+    validTime &&
+    validOffset &&
+    Number.isFinite(Date.parse(value))
+  );
+}
+
+function isJsonValue(
+  value: unknown,
+  ancestors: Set<object> = new Set()
+): value is JsonValue {
+  if (
+    value === null ||
+    typeof value === 'string' ||
+    typeof value === 'boolean'
+  ) {
+    return true;
+  }
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (typeof value !== 'object') return false;
+  if (ancestors.has(value)) return false;
+
+  ancestors.add(value);
+  let valid: boolean;
+  if (Array.isArray(value)) {
+    valid = value.every((item) => isJsonValue(item, ancestors));
+  } else {
+    const prototype = Object.getPrototypeOf(value);
+    valid =
+      (prototype === Object.prototype || prototype === null) &&
+      Object.values(value).every((item) => isJsonValue(item, ancestors));
+  }
+  ancestors.delete(value);
+
+  return valid;
 }
 
 function isAbsoluteHttpUrl(value: unknown): value is string {
@@ -265,12 +359,16 @@ function validateEvidenceReferences(
     return;
   }
 
+  const referencedIds = new Set<string>();
   for (const evidenceId of value) {
     if (!isNonemptyString(evidenceId)) {
       errors.push(`${path} must contain only nonempty evidence IDs.`);
+    } else if (referencedIds.has(evidenceId)) {
+      errors.push(`${path} must not contain duplicate evidence IDs.`);
     } else if (!knownEvidenceIds.has(evidenceId)) {
       errors.push(`${path} references unknown evidence ID "${evidenceId}".`);
     }
+    if (isNonemptyString(evidenceId)) referencedIds.add(evidenceId);
   }
 }
 
@@ -310,12 +408,23 @@ export function validateRetailerObservation(
   const product = isRecord(value.product) ? value.product : null;
   if (!product) {
     errors.push('product must be an object.');
-  } else if (
-    product.productType !== null &&
-    (typeof product.productType !== 'string' ||
-      !isPokemonProductType(product.productType))
-  ) {
-    errors.push('product.productType must be null or an approved product type.');
+  } else {
+    for (const field of [
+      'retailerSku',
+      'rawName',
+      'canonicalProductKey',
+    ] as const) {
+      if (product[field] !== null && !isNonemptyString(product[field])) {
+        errors.push(`product.${field} must be null or a nonempty string.`);
+      }
+    }
+    if (
+      product.productType !== null &&
+      (typeof product.productType !== 'string' ||
+        !isPokemonProductType(product.productType))
+    ) {
+      errors.push('product.productType must be null or an approved product type.');
+    }
   }
 
   const listing = isRecord(value.listing) ? value.listing : null;
@@ -330,6 +439,13 @@ export function validateRetailerObservation(
     }
     if (!includesValue(RELEASE_STATES, listing.releaseState)) {
       errors.push('listing.releaseState is invalid.');
+    }
+    if (
+      listing.releaseDate !== null &&
+      !isValidIsoDate(listing.releaseDate) &&
+      !isValidIsoDateTime(listing.releaseDate)
+    ) {
+      errors.push('listing.releaseDate must be null, an ISO date, or an ISO date-time.');
     }
   }
 
@@ -391,8 +507,8 @@ export function validateRetailerObservation(
   if (!isScore(value.confidenceScore)) {
     errors.push('confidenceScore must be between 0 and 100.');
   }
-  if (!isValidTimestamp(value.observedAt)) {
-    errors.push('observedAt must be a valid timestamp.');
+  if (!isValidIsoDateTime(value.observedAt)) {
+    errors.push('observedAt must be a valid ISO date-time.');
   }
 
   const acquisition = isRecord(value.acquisition) ? value.acquisition : null;
@@ -408,8 +524,17 @@ export function validateRetailerObservation(
     if (!isAbsoluteHttpUrl(acquisition.finalUrl)) {
       errors.push('acquisition.finalUrl must be an absolute HTTP/HTTPS URL.');
     }
-    if (!isValidTimestamp(acquisition.acquiredAt)) {
-      errors.push('acquisition.acquiredAt must be a valid timestamp.');
+    if (
+      acquisition.httpStatus !== null &&
+      (typeof acquisition.httpStatus !== 'number' ||
+        !Number.isInteger(acquisition.httpStatus) ||
+        acquisition.httpStatus < 100 ||
+        acquisition.httpStatus > 599)
+    ) {
+      errors.push('acquisition.httpStatus must be null or an integer from 100 to 599.');
+    }
+    if (!isValidIsoDateTime(acquisition.acquiredAt)) {
+      errors.push('acquisition.acquiredAt must be a valid ISO date-time.');
     }
   }
 
@@ -430,6 +555,24 @@ export function validateRetailerObservation(
         errors.push(`evidence ID "${item.id}" must be unique.`);
       } else {
         evidenceIds.add(item.id);
+      }
+      if (!includesValue(OBSERVATION_EVIDENCE_KINDS, item.kind)) {
+        errors.push(`${path}.kind is invalid.`);
+      }
+      if (!isNonemptyString(item.field)) {
+        errors.push(`${path}.field must be nonempty.`);
+      }
+      if (!isJsonValue(item.value)) {
+        errors.push(`${path}.value must be JSON-compatible.`);
+      }
+      if (!isNonemptyString(item.source)) {
+        errors.push(`${path}.source must be nonempty.`);
+      }
+      if (item.locator !== null && typeof item.locator !== 'string') {
+        errors.push(`${path}.locator must be null or a string.`);
+      }
+      if (item.excerpt !== null && typeof item.excerpt !== 'string') {
+        errors.push(`${path}.excerpt must be null or a string.`);
       }
       if (!isScore(item.confidenceScore)) {
         errors.push(`${path}.confidenceScore must be between 0 and 100.`);
@@ -455,6 +598,17 @@ export function validateRetailerObservation(
       if (!includesValue(PURCHASE_ACTION_STATES, action.state)) {
         errors.push(`actions.${actionName}.state is invalid.`);
       }
+      if (action.label !== null && typeof action.label !== 'string') {
+        errors.push(`actions.${actionName}.label must be null or a string.`);
+      }
+      if (
+        action.targetUrl !== null &&
+        !isAbsoluteHttpUrl(action.targetUrl)
+      ) {
+        errors.push(
+          `actions.${actionName}.targetUrl must be null or an absolute HTTP/HTTPS URL.`
+        );
+      }
       validateEvidenceReferences(
         action.evidenceIds,
         `actions.${actionName}.evidenceIds`,
@@ -468,13 +622,29 @@ export function validateRetailerObservation(
     errors.push('sellerEvidence must be an array.');
   } else {
     for (const [index, item] of value.sellerEvidence.entries()) {
+      const path = `sellerEvidence[${index}]`;
       if (!isRecord(item)) {
-        errors.push(`sellerEvidence[${index}] must be an object.`);
+        errors.push(`${path} must be an object.`);
         continue;
+      }
+      for (const field of [
+        'sellerName',
+        'merchantId',
+        'offeredByText',
+      ] as const) {
+        if (item[field] !== null && typeof item[field] !== 'string') {
+          errors.push(`${path}.${field} must be null or a string.`);
+        }
+      }
+      if (
+        item.marketplaceBadgePresent !== null &&
+        typeof item.marketplaceBadgePresent !== 'boolean'
+      ) {
+        errors.push(`${path}.marketplaceBadgePresent must be null or a boolean.`);
       }
       validateEvidenceReferences(
         item.evidenceIds,
-        `sellerEvidence[${index}].evidenceIds`,
+        `${path}.evidenceIds`,
         evidenceIds,
         errors
       );
@@ -483,16 +653,26 @@ export function validateRetailerObservation(
 
   if (fulfillment && Array.isArray(fulfillment.pickupStores)) {
     for (const [index, item] of fulfillment.pickupStores.entries()) {
+      const path = `fulfillment.pickupStores[${index}]`;
       if (!isRecord(item)) {
-        errors.push(`fulfillment.pickupStores[${index}] must be an object.`);
+        errors.push(`${path} must be an object.`);
         continue;
       }
+      for (const field of [
+        'retailerStoreId',
+        'name',
+        'postalCode',
+      ] as const) {
+        if (item[field] !== null && typeof item[field] !== 'string') {
+          errors.push(`${path}.${field} must be null or a string.`);
+        }
+      }
       if (!includesValue(FULFILLMENT_CHANNEL_STATES, item.availability)) {
-        errors.push(`fulfillment.pickupStores[${index}].availability is invalid.`);
+        errors.push(`${path}.availability is invalid.`);
       }
       validateEvidenceReferences(
         item.evidenceIds,
-        `fulfillment.pickupStores[${index}].evidenceIds`,
+        `${path}.evidenceIds`,
         evidenceIds,
         errors
       );
