@@ -1,6 +1,6 @@
 import {
-  AvailabilityState,
   BestValueTag,
+  OpportunityEvidenceState,
   PokemonProductType,
   ReadinessBand,
   RetailerId,
@@ -58,24 +58,21 @@ export const TRACKER_POLICY_V1 = {
     'recency',
   ] as const,
   tierRules: {
-    tier1Availability: [
-      'add_to_cart',
-      'preorder_live',
-      'local_pickup_available',
-    ] as readonly AvailabilityState[],
-    tier2Availability: [
+    tier1Evidence: [
+      'confirmed_add_to_cart',
+      'confirmed_preorder_live',
+      'confirmed_local_pickup',
+    ] as readonly OpportunityEvidenceState[],
+    tier2Evidence: [
       'likely_stock',
       'likely_preorder',
-    ] as readonly AvailabilityState[],
+    ] as readonly OpportunityEvidenceState[],
     minimumIndependentSourcesForTier2: 2,
     rejectedSellerClassifications: [
       'third_party',
       'mixed',
       'unknown',
     ] as readonly SellerClassification[],
-    excludedAvailability: [
-      'marketplace_only',
-    ] as readonly AvailabilityState[],
   },
   readiness: {
     confidenceWeight: 0.35,

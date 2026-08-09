@@ -1,18 +1,18 @@
 import { TRACKER_POLICY_V1 } from './tracker-policy.v1';
+import type { SellerValidationResult } from './retailer-observation';
 import {
-  AvailabilityState,
   isPokemonProductType,
   isRetailerId,
+  OpportunityEvidenceState,
   OpportunityTier,
-  SellerClassification,
 } from './tracker-types';
 
 export interface TierInput {
   retailer: string;
   productType: string;
   country: string;
-  sellerClassification: SellerClassification;
-  availabilityState: AvailabilityState;
+  sellerValidation: SellerValidationResult;
+  opportunityEvidence: OpportunityEvidenceState;
   independentSourceCount: number;
 }
 
@@ -44,15 +44,20 @@ export function evaluateTier(input: TierInput): TierResult {
     return { eligible: false, tier: null, reason: 'country_out_of_scope' };
   }
 
-  if (rules.rejectedSellerClassifications.includes(input.sellerClassification)) {
+  if (
+    rules.rejectedSellerClassifications.includes(
+      input.sellerValidation.classification
+    ) ||
+    input.sellerValidation.firstParty !== true
+  ) {
     return { eligible: false, tier: null, reason: 'seller_not_first_party' };
   }
 
-  if (rules.excludedAvailability.includes(input.availabilityState)) {
+  if (input.sellerValidation.marketplaceOnly === true) {
     return { eligible: false, tier: null, reason: 'marketplace_only' };
   }
 
-  if (rules.tier1Availability.includes(input.availabilityState)) {
+  if (rules.tier1Evidence.includes(input.opportunityEvidence)) {
     return { eligible: true, tier: 'tier_1', reason: 'confirmed' };
   }
 
@@ -61,7 +66,7 @@ export function evaluateTier(input: TierInput): TierResult {
     Math.floor(Number.isFinite(input.independentSourceCount) ? input.independentSourceCount : 0)
   );
   if (
-    rules.tier2Availability.includes(input.availabilityState) &&
+    rules.tier2Evidence.includes(input.opportunityEvidence) &&
     sourceCount >= rules.minimumIndependentSourcesForTier2
   ) {
     return { eligible: true, tier: 'tier_2', reason: 'multi_source_likely' };

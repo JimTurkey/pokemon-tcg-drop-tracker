@@ -22,6 +22,22 @@ describe('TRACKER_POLICY_V1', () => {
     ]);
   });
 
+  it('uses derived opportunity evidence for the preserved tier rules', () => {
+    expect(TRACKER_POLICY_V1.version).toBe('v1');
+    expect(TRACKER_POLICY_V1.tierRules.tier1Evidence).toEqual([
+      'confirmed_add_to_cart',
+      'confirmed_preorder_live',
+      'confirmed_local_pickup',
+    ]);
+    expect(TRACKER_POLICY_V1.tierRules.tier2Evidence).toEqual([
+      'likely_stock',
+      'likely_preorder',
+    ]);
+    expect(
+      TRACKER_POLICY_V1.tierRules.minimumIndependentSourcesForTier2
+    ).toBe(2);
+  });
+
   it('preserves the workbook rumor-readiness issue as unresolved', () => {
     expect(TRACKER_POLICY_V1.unresolvedPolicyDecisions.rumorReadinessFormula.status)
       .toBe('unresolved');
