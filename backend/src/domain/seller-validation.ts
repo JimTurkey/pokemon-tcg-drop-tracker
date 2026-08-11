@@ -51,14 +51,16 @@ type EvidenceAssessment =
   | 'first_party_merchant'
   | 'third_party'
   | 'ambiguous'
+  | 'neutral_merchant'
   | 'empty';
 
 const offeredByPrefixes = [
   'sold and shipped by ',
   'sold by ',
   'offered by ',
-  'fulfilled by ',
 ] as const;
+
+const fulfillmentPrefixes = ['fulfilled by '] as const;
 
 export function normalizeSellerIdentity(value: string): string {
   return value
@@ -68,8 +70,12 @@ export function normalizeSellerIdentity(value: string): string {
     .replace(/\s+/g, ' ');
 }
 
-function normalizeOfferedByIdentity(value: string): string {
+function normalizeOfferedByIdentity(value: string): string | null {
   const normalized = normalizeSellerIdentity(value);
+  if (fulfillmentPrefixes.some((prefix) => normalized.startsWith(prefix))) {
+    return null;
+  }
+
   const prefix = offeredByPrefixes.find((candidate) =>
     normalized.startsWith(candidate)
   );
@@ -91,7 +97,12 @@ function assessSellerEvidence(
     sellerIdentities.add(normalizeSellerIdentity(evidence.sellerName));
   }
   if (nonempty(evidence.offeredByText)) {
-    sellerIdentities.add(normalizeOfferedByIdentity(evidence.offeredByText));
+    const offeredByIdentity = normalizeOfferedByIdentity(
+      evidence.offeredByText
+    );
+    if (offeredByIdentity !== null) {
+      sellerIdentities.add(offeredByIdentity);
+    }
   }
 
   const merchantId = nonempty(evidence.merchantId)
@@ -105,9 +116,9 @@ function assessSellerEvidence(
   );
   const merchantMatches =
     merchantId !== null && approvedMerchantIds.has(merchantId);
-  const merchantMismatch = merchantId !== null && !merchantMatches;
+  const hasUnreviewedMerchantId = merchantId !== null && !merchantMatches;
   const hasFirstPartyMatch = nameMatches.length > 0 || merchantMatches;
-  const hasUnrecognizedIdentity = nameMismatches.length > 0 || merchantMismatch;
+  const hasUnrecognizedIdentity = nameMismatches.length > 0;
 
   if (
     hasFirstPartyMatch &&
@@ -120,6 +131,7 @@ function assessSellerEvidence(
   if (nameMatches.length > 0) return 'first_party_name';
   if (hasUnrecognizedIdentity) return 'third_party';
   if (evidence.marketplaceBadgePresent === true) return 'ambiguous';
+  if (hasUnreviewedMerchantId) return 'neutral_merchant';
   return 'empty';
 }
 
@@ -164,6 +176,7 @@ export function createSellerValidator(
       const hasFirstParty = hasFirstPartyName || hasFirstPartyMerchant;
       const hasThirdParty = assessments.has('third_party');
       const hasAmbiguous = assessments.has('ambiguous');
+      const hasNeutralMerchant = assessments.has('neutral_merchant');
 
       if (hasFirstParty && hasThirdParty) {
         return {
@@ -209,7 +222,11 @@ export function createSellerValidator(
         classification: 'unknown',
         firstParty: null,
         marketplaceOnly: null,
-        reasons: ['missing_seller_evidence'],
+        reasons: [
+          hasNeutralMerchant
+            ? 'unreviewed_merchant_id'
+            : 'missing_seller_evidence',
+        ],
       };
     },
   };

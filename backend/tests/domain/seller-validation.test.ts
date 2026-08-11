@@ -114,6 +114,51 @@ describe('seller validation V1 policy', () => {
       reasons: ['approved_merchant_id'],
     });
   });
+
+  it('keeps an unreviewed merchant ID neutral when no seller identity exists', () => {
+    expect(validate('target', [{
+      sellerName: null,
+      merchantId: 'opaque-123',
+      offeredByText: null,
+      marketplaceBadgePresent: null,
+      evidenceIds: ['unknown-merchant-id'],
+    }])).toEqual({
+      classification: 'unknown',
+      firstParty: null,
+      marketplaceOnly: null,
+      reasons: ['unreviewed_merchant_id'],
+    });
+  });
+
+  it('does not let an unreviewed merchant ID contradict an approved seller name', () => {
+    expect(validate('target', [{
+      sellerName: 'Target',
+      merchantId: 'opaque-123',
+      offeredByText: null,
+      marketplaceBadgePresent: false,
+      evidenceIds: ['approved-name-unknown-merchant'],
+    }])).toEqual({
+      classification: 'first_party',
+      firstParty: true,
+      marketplaceOnly: false,
+      reasons: ['approved_seller_identity'],
+    });
+  });
+
+  it('does not let an unreviewed merchant ID hide an explicit third-party seller', () => {
+    expect(validate('target', [{
+      sellerName: 'Example Marketplace',
+      merchantId: 'opaque-123',
+      offeredByText: null,
+      marketplaceBadgePresent: false,
+      evidenceIds: ['third-party-name-unknown-merchant'],
+    }])).toEqual({
+      classification: 'third_party',
+      firstParty: false,
+      marketplaceOnly: null,
+      reasons: ['unrecognized_seller_identity'],
+    });
+  });
 });
 
 describe('conservative seller classification', () => {
@@ -191,6 +236,56 @@ describe('conservative seller classification', () => {
       firstParty: null,
       marketplaceOnly: null,
       reasons: ['ambiguous_or_conflicting_seller_evidence'],
+    });
+  });
+
+  it.each([
+    ['walmart', 'Fulfilled by Walmart'],
+    ['target', 'Fulfilled by Target'],
+    ['walmart', 'Fulfilled by Example Marketplace'],
+  ] as const)(
+    'does not treat fulfillment text as seller identity for %s: %s',
+    (retailerId, offeredByText) => {
+      expect(validate(retailerId, [{
+        sellerName: null,
+        merchantId: null,
+        offeredByText,
+        marketplaceBadgePresent: null,
+        evidenceIds: ['fulfillment-only'],
+      }])).toEqual({
+        classification: 'unknown',
+        firstParty: null,
+        marketplaceOnly: null,
+        reasons: ['missing_seller_evidence'],
+      });
+    }
+  );
+
+  it('continues to treat sold-by text as genuine seller identity', () => {
+    expect(validate('walmart', [{
+      sellerName: null,
+      merchantId: null,
+      offeredByText: 'Sold by Walmart',
+      marketplaceBadgePresent: false,
+      evidenceIds: ['sold-by-first-party'],
+    }])).toEqual({
+      classification: 'first_party',
+      firstParty: true,
+      marketplaceOnly: false,
+      reasons: ['approved_seller_identity'],
+    });
+
+    expect(validate('walmart', [{
+      sellerName: null,
+      merchantId: null,
+      offeredByText: 'Sold by Example Marketplace',
+      marketplaceBadgePresent: false,
+      evidenceIds: ['sold-by-third-party'],
+    }])).toEqual({
+      classification: 'third_party',
+      firstParty: false,
+      marketplaceOnly: null,
+      reasons: ['unrecognized_seller_identity'],
     });
   });
 

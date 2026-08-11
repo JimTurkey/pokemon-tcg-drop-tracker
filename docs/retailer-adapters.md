@@ -61,11 +61,15 @@ of first-party status. No concrete retailer adapter is included yet.
 Seller validation is a separate pure domain step over structurally valid raw
 `SellerEvidence`. V1 uses normalized exact matching only: Unicode normalization,
 trim, case-fold, internal-whitespace collapse, and exact removal of common
-"sold by" prefixes. It does not use fuzzy matching.
+seller-oriented prefixes such as "sold by" and "offered by." Fulfillment text
+is not seller identity and is ignored for seller classification. It does not
+use fuzzy matching.
 
 The reviewed V1 seller names are Pokémon Center/Pokemon Center, Target, Best
 Buy, and Walmart/Walmart.com. Merchant-ID allowlists are intentionally empty
-until representative fixtures confirm stable IDs.
+until representative fixtures confirm stable IDs. An unknown merchant ID is
+neutral evidence until reviewed: it neither establishes third-party status nor
+contradicts an otherwise approved seller name.
 
 Missing seller evidence, a false marketplace badge without identity, or
 ambiguous/contradictory evidence stays `unknown`. First- and third-party offer
