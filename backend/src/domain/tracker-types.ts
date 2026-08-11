@@ -27,35 +27,95 @@ export const SELLER_CLASSIFICATIONS = [
 
 export type SellerClassification = (typeof SELLER_CLASSIFICATIONS)[number];
 
-export const AVAILABILITY_STATES = [
+export const STOCK_AVAILABILITY_STATES = [
   'unknown',
-  'coming_soon',
-  'preorder_announced',
-  'preorder_live',
-  'add_to_cart',
-  'local_pickup_available',
-  'likely_stock',
-  'likely_preorder',
+  'in_stock',
   'out_of_stock',
   'sold_out',
-  'notify_me',
-  'waitlist',
-  'invitation_only',
-  'marketplace_only',
-  'blocked_or_challenged',
-  'error',
 ] as const;
 
-export type AvailabilityState = (typeof AVAILABILITY_STATES)[number];
+export type StockAvailabilityState =
+  (typeof STOCK_AVAILABILITY_STATES)[number];
+
+export const RELEASE_STATES = [
+  'unknown',
+  'coming_soon',
+  'released',
+] as const;
+
+export type ReleaseState = (typeof RELEASE_STATES)[number];
+
+export const PREORDER_STATES = [
+  'unknown',
+  'not_applicable',
+  'announced',
+  'not_live',
+  'live',
+  'closed',
+] as const;
+
+export type PreorderState = (typeof PREORDER_STATES)[number];
 
 export const ACCESS_STATES = [
+  'unknown',
   'public',
-  'invitation_only',
-  'member_only',
   'account_required',
+  'member_only',
+  'invitation_only',
 ] as const;
 
 export type AccessState = (typeof ACCESS_STATES)[number];
+
+export const FULFILLMENT_CHANNEL_STATES = [
+  'unknown',
+  'available',
+  'unavailable',
+  'not_offered',
+] as const;
+
+export type FulfillmentChannelState =
+  (typeof FULFILLMENT_CHANNEL_STATES)[number];
+
+export const LISTING_VISIBILITY_STATES = [
+  'unknown',
+  'visible',
+  'hidden',
+] as const;
+
+export type ListingVisibilityState =
+  (typeof LISTING_VISIBILITY_STATES)[number];
+
+export const LISTING_CHANGE_STATES = [
+  'unknown',
+  'first_seen',
+  'unchanged',
+  'activated',
+  'deactivated',
+  'changed',
+] as const;
+
+export type ListingChangeState = (typeof LISTING_CHANGE_STATES)[number];
+
+export const PURCHASE_ACTION_STATES = [
+  'unknown',
+  'enabled',
+  'disabled',
+  'absent',
+] as const;
+
+export type PurchaseActionState = (typeof PURCHASE_ACTION_STATES)[number];
+
+export const OPPORTUNITY_EVIDENCE_STATES = [
+  'none',
+  'confirmed_add_to_cart',
+  'confirmed_preorder_live',
+  'confirmed_local_pickup',
+  'likely_stock',
+  'likely_preorder',
+] as const;
+
+export type OpportunityEvidenceState =
+  (typeof OPPORTUNITY_EVIDENCE_STATES)[number];
 
 export type OpportunityTier = 'tier_1' | 'tier_2' | 'rumor';
 
