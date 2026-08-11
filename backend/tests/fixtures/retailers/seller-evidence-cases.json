@@ -1,0 +1,101 @@
+{
+  "fixtureNotice": "Synthetic and sanitized policy cases; not captured production retailer markup.",
+  "cases": {
+    "missing": [],
+    "pokemonCenterFirstParty": [
+      {
+        "sellerName": "Pokémon Center",
+        "merchantId": null,
+        "offeredByText": "Sold by Pokémon Center",
+        "marketplaceBadgePresent": false,
+        "evidenceIds": ["pc-seller"]
+      }
+    ],
+    "targetFirstParty": [
+      {
+        "sellerName": "Target",
+        "merchantId": null,
+        "offeredByText": "Sold by Target",
+        "marketplaceBadgePresent": false,
+        "evidenceIds": ["target-seller"]
+      }
+    ],
+    "bestBuyFirstParty": [
+      {
+        "sellerName": "Best Buy",
+        "merchantId": null,
+        "offeredByText": "Sold by Best Buy",
+        "marketplaceBadgePresent": false,
+        "evidenceIds": ["best-buy-seller"]
+      }
+    ],
+    "walmartFirstParty": [
+      {
+        "sellerName": "Walmart.com",
+        "merchantId": null,
+        "offeredByText": "Sold by Walmart.com",
+        "marketplaceBadgePresent": false,
+        "evidenceIds": ["walmart-seller"]
+      }
+    ],
+    "thirdParty": [
+      {
+        "sellerName": "Example Card Marketplace",
+        "merchantId": null,
+        "offeredByText": "Sold by Example Card Marketplace",
+        "marketplaceBadgePresent": true,
+        "evidenceIds": ["third-party-seller"]
+      }
+    ],
+    "mixed": [
+      {
+        "sellerName": "Walmart",
+        "merchantId": null,
+        "offeredByText": "Sold by Walmart",
+        "marketplaceBadgePresent": false,
+        "evidenceIds": ["walmart-first-party"]
+      },
+      {
+        "sellerName": "Example Card Marketplace",
+        "merchantId": null,
+        "offeredByText": "Sold by Example Card Marketplace",
+        "marketplaceBadgePresent": true,
+        "evidenceIds": ["walmart-third-party"]
+      }
+    ],
+    "marketplaceBadgeWithoutSeller": [
+      {
+        "sellerName": null,
+        "merchantId": null,
+        "offeredByText": null,
+        "marketplaceBadgePresent": true,
+        "evidenceIds": ["marketplace-badge"]
+      }
+    ],
+    "falseMarketplaceBadgeWithoutSeller": [
+      {
+        "sellerName": null,
+        "merchantId": null,
+        "offeredByText": null,
+        "marketplaceBadgePresent": false,
+        "evidenceIds": ["no-marketplace-badge"]
+      }
+    ],
+    "reorderedMultipleSellers": [
+      {
+        "sellerName": "Example Card Marketplace",
+        "merchantId": null,
+        "offeredByText": "Sold by Example Card Marketplace",
+        "marketplaceBadgePresent": true,
+        "evidenceIds": ["walmart-third-party"]
+      },
+      {
+        "sellerName": "Walmart",
+        "merchantId": null,
+        "offeredByText": "Sold by Walmart",
+        "marketplaceBadgePresent": false,
+        "evidenceIds": ["walmart-first-party"]
+      }
+    ]
+  }
+}
